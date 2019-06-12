@@ -17,8 +17,9 @@ public class MainTest {
 
     public static void main(String[] args){
 
-        producerSendAvroObjectTest();
+//        producerSendAvroObjectTest();
 
+        System.out.println("github commit test");
 //        producerSendStringTest();
 
 //        producerSendObjectTest();
