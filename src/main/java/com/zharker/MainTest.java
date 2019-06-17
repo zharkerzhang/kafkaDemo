@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 public class MainTest {
 
@@ -29,13 +30,137 @@ public class MainTest {
 
     public static void main(String[] args){
 
-        comsumerBooktest();
+        consumerRecieveDataWithoutConsumerGroupTest();
+
+//        consumerRecieveAvroObjectTest();
+        
+//        consumerRecieveObjectTest();
+
+//        comsumerBooktest();
 
 //        producerSendAvroObjectTest();
 
 //        producerSendStringTest();
 
 //        producerSendObjectTest();
+    }
+
+    private static void consumerRecieveDataWithoutConsumerGroupTest() {
+        Properties kafkaPros = new Properties();
+        kafkaPros.put("bootstrap.servers",BOOTSTRAP_SERVERS);
+        kafkaPros.put("key.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
+//        kafkaPros.put("group.id","cg1");
+        kafkaPros.put("value.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
+
+        KafkaConsumer<String,String> consumer = new KafkaConsumer<>(kafkaPros);
+
+        consumer.assign(consumer.partitionsFor("tp1").stream()
+                .map(partitionInfo->new TopicPartition(partitionInfo.topic(),partitionInfo.partition()))
+                .collect(Collectors.toList()));
+
+        Thread mainthread = Thread.currentThread();
+        Runtime.getRuntime().addShutdownHook(new Thread(){
+            public void run(){
+                consumer.wakeup();
+                try{
+                    mainthread.join();
+                }catch (InterruptedException e){
+                    e.printStackTrace();
+                }
+            }
+        });
+        try {
+            while (true) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(10 * 1000l));
+                records.forEach(record -> {
+                    System.out.println("key:" + record.key() + ",value:" + record.value());
+                });
+            }
+        }catch (Exception e){
+            e.printStackTrace();
+        }finally {
+            consumer.close();
+        }
+    }
+
+    private static void consumerRecieveAvroObjectTest() {
+        Properties kafkaPros = new Properties();
+        kafkaPros.put("bootstrap.servers",BOOTSTRAP_SERVERS);
+        kafkaPros.put("key.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
+        kafkaPros.put("group.id","cg1");
+        kafkaPros.put("value.deserializer","io.confluent.kafka.serializers.KafkaAvroDeserializer");
+        kafkaPros.put("schema.registry.url","http://localhost:8081");
+        kafkaPros.put("specific.avro.reader", true);
+        KafkaConsumer<String,Customer> consumer = new KafkaConsumer<>(kafkaPros);
+        consumer.subscribe(Collections.singleton("tp1"));
+        Thread thread = new Thread(()->{
+            try{
+                while(true){
+                    Thread.sleep(10*1000);
+                    ConsumerRecords<String, Customer> records = consumer.poll(Duration.ofMillis(10*1000l));
+                    records.forEach(record->{
+                        System.out.println("[to consumer]key:"+record.key());
+                        System.out.println("[to consumer]value: "+record.value());
+                    });
+                }
+            }catch (Exception e){
+                System.out.println("schema not found exception?");
+                e.printStackTrace();
+            }finally {
+                consumer.close();
+            }
+        });
+        thread.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(){
+            public void run(){
+                consumer.wakeup();
+                try{
+                    thread.join();
+                }catch (InterruptedException e){
+                    e.printStackTrace();
+                }
+            }
+        });
+    }
+
+    private static void consumerRecieveObjectTest() {
+        Properties kafkaPros = new Properties();
+        kafkaPros.put("bootstrap.servers",BOOTSTRAP_SERVERS);
+        kafkaPros.put("key.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
+        kafkaPros.put("value.deserializer","com.zharker.serialize.CustomerDeserializer");
+        kafkaPros.put("group.id","cg1");
+
+        KafkaConsumer<String,Customer> consumer = new KafkaConsumer<>(kafkaPros);
+        consumer.subscribe(Collections.singleton("tp1"));
+        Thread thread = new Thread(()->{
+            try{
+                while(true){
+                    Thread.sleep(10*1000l);
+                    System.out.println("===recieve to consumer===");
+                    ConsumerRecords<String, Customer> records = consumer.poll(Duration.ofMillis(10*1000l));
+                    records.forEach(consumerRecord->{
+                        System.out.println("[to consumer]key: "+consumerRecord.key());
+                        System.out.println("[to consumer]value: "+consumerRecord.value());
+
+                    });
+                }
+            }catch (Exception e){
+                e.printStackTrace();
+            }finally {
+                consumer.close();
+            }
+        });
+        thread.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(){
+            public void run(){
+                consumer.wakeup();
+                try{
+                    thread.join();
+                }catch (InterruptedException e){
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     private static void comsumerBooktest() {
@@ -141,32 +266,41 @@ public class MainTest {
     }
 
     private static void producerSendAvroObjectTest() {
-        Properties kafkaPros = new Properties();
-        kafkaPros.put("bootstrap.servers","localhost:9092");
-        kafkaPros.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");
-        kafkaPros.put("value.serializer", "io.confluent.kafka.serializers.KafkaAvroSerializer");
-        kafkaPros.put("schema.registry.url","http://localhost:8081");
-        Producer<String, GenericRecord> producer = new KafkaProducer<>(kafkaPros);
-        Schema.Parser parser = new Schema.Parser();
-        Schema schema = parser.parse(Customer.CUSTOMER_SCHEMA);
 
-        GenericRecord customer = new GenericData.Record(schema);
-        customer.put("id", RandomUtils.nextInt(1000,9999));
-        customer.put("name", RandomStringUtils.random(8,true,true));
-        customer.put("email", RandomStringUtils.random(8,true,true)+"@zharker.com");
+        new Thread(()->{
+            Properties kafkaPros = new Properties();
+            kafkaPros.put("bootstrap.servers","localhost:9092");
+            kafkaPros.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");
+            kafkaPros.put("value.serializer", "io.confluent.kafka.serializers.KafkaAvroSerializer");
+            kafkaPros.put("schema.registry.url","http://localhost:8081");
+            Producer<String, GenericRecord> producer = new KafkaProducer<>(kafkaPros);
+            Schema.Parser parser = new Schema.Parser();
+            Schema schema = parser.parse(Customer.CUSTOMER_SCHEMA);
 
-        ProducerRecord<String, GenericRecord> record = new ProducerRecord<>("tp1", customer);
+            try {
+                while (true) {
+                    GenericRecord customer = new GenericData.Record(schema);
+                    customer.put("id", RandomUtils.nextInt(1000,9999));
+                    customer.put("name", RandomStringUtils.random(8,true,true));
+                    customer.put("email", RandomStringUtils.random(8,true,true)+"@zharker.com");
 
-        try {
-            Object result = producer.send(record).get();
-            System.out.println(result);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        } catch (ExecutionException e) {
-            e.printStackTrace();
-        }finally {
-            producer.close();
-        }
+                    ProducerRecord<String, GenericRecord> record = new ProducerRecord<>("tp1", customer);
+
+                    try {
+                        Object result = producer.send(record).get();
+                        System.out.println(result);
+                    } catch (InterruptedException|ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                    Thread.sleep(1*1000);
+                }
+            }catch (Exception e){
+                e.printStackTrace();
+            }finally {
+                producer.close();
+            }
+        }).start();
+
 
     }
 
@@ -175,30 +309,31 @@ public class MainTest {
         kafkaPros.put("bootstrap.servers","localhost:9092");
         kafkaPros.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");
         kafkaPros.put("value.serializer","com.zharker.serialize.CustomerSerializer");
-
         KafkaProducer producer = new KafkaProducer<String,Customer>(kafkaPros);
-
-        ProducerRecord<String, Customer> record = new ProducerRecord<>("test_topic","Customer2333",new Customer(2333,"ejvinea"));
-        try {
-            Object result = producer.send(record).get();
-            System.out.println(result);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-
-            String str = "{\n" +
-                    "    \"type\": \"record\",\n" +
-                    "    \"name\": \"Customer\",\n" +
-                    "    \"fields\": [\n" +
-                    "        {\"name\": \"id\", \"type\": \"int\"},\n" +
-                    "        {\"name\": \"name\",  \"type\": \"string\"},\n" +
-                    "        {\"name\": \"email\", \"type\": [\"null\",\"string\"],\"default\":\"null\"}\n" +
-                    "    ]\n" +
-                    "}";
-        } catch (ExecutionException e) {
-            e.printStackTrace();
-        }finally {
-            producer.close();
-        }
+        new Thread(()->{
+            try {
+                while (true) {
+                    int randomInt = RandomUtils.nextInt(1000, 9999);
+                    String key = "Customer" + randomInt;
+                    Customer value = new Customer(randomInt, RandomStringUtils.random(6, true, true));
+                    System.out.println("===send from producer===");
+                    System.out.println("[from producer]key: " + key);
+                    System.out.println("[from producer]value: " + value);
+                    ProducerRecord<String, Customer> record = new ProducerRecord<>("tp1", key, value);
+                    try {
+                        Object result = producer.send(record).get();
+                        System.out.println("[from producer]" + result);
+                        Thread.sleep(1 * 1000l);
+                    } catch (InterruptedException | ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }catch (Exception e){
+                e.printStackTrace();
+            }finally {
+                producer.close();
+            }
+        }).start();
     }
 
     private static void producerSendStringTest() {
